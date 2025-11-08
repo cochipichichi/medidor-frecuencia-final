@@ -1,17 +1,32 @@
-// FINAL repo: audio + 2D + 3D (local) + selector de micrófono + pausa
+// Opción A FULL: todos los controles + 2D + 3D con three 0.139.0
 let audioCtx, analyser, dataArray, source, currentStream;
 let running = false;
 let paused = false;
 let frozen = false;
 let maxFreq = 0;
 let samples = [];
+let modeDocente = false;
+let currentLang = "es";
 
 const btnStart = document.getElementById("btn-start");
 const btnStop = document.getElementById("btn-stop");
 const btnFreeze = document.getElementById("btn-freeze");
 const btnPause = document.getElementById("btn-pause");
 const btnExport = document.getElementById("btn-export");
+const btnMode = document.getElementById("btn-mode");
+const btnToggle3d = document.getElementById("btn-toggle-3d");
 const deviceSelect = document.getElementById("inputDevice");
+
+const btnHome = document.getElementById("btn-home");
+const btnVoz = document.getElementById("btn-voz");
+const btnTheme = document.getElementById("btn-theme");
+const btnPlus = document.getElementById("btn-plus");
+const btnMinus = document.getElementById("btn-minus");
+const btnLang = document.getElementById("btn-lang");
+const btnFocus = document.getElementById("btn-focus");
+const btnSearch = document.getElementById("btn-search");
+const searchOverlay = document.getElementById("search-overlay");
+const searchClose = document.getElementById("search-close");
 
 const freqValueEl = document.getElementById("freq-value");
 const freqMaxEl = document.getElementById("freq-max");
@@ -25,7 +40,9 @@ let scene, camera, renderer, controls, geometry, mesh;
 const SPECTRUM_SIZE = 96;
 const HISTORY_DEPTH = 80;
 let heightData = [];
+let show3D = true;
 
+// load devices
 async function loadDevices() {
   if (!navigator.mediaDevices?.enumerateDevices) return;
   const devices = await navigator.mediaDevices.enumerateDevices();
@@ -40,6 +57,7 @@ async function loadDevices() {
 }
 loadDevices();
 
+// audio controls
 btnStart.addEventListener("click", async () => {
   if (running) return;
   try {
@@ -54,7 +72,6 @@ btnStart.addEventListener("click", async () => {
 
     source = audioCtx.createMediaStreamSource(currentStream);
     source.connect(analyser);
-
     dataArray = new Uint8Array(analyser.frequencyBinCount);
 
     running = true;
@@ -68,6 +85,7 @@ btnStart.addEventListener("click", async () => {
     draw();
   } catch (e) {
     alert("No se pudo acceder al micrófono");
+    console.error(e);
   }
 });
 
@@ -77,7 +95,6 @@ btnStop.addEventListener("click", () => {
   btnStop.disabled = true;
   btnFreeze.disabled = true;
   btnPause.disabled = true;
-  freqValueEl.textContent = "-- Hz";
 });
 
 btnFreeze.addEventListener("click", () => {
@@ -109,16 +126,73 @@ btnExport.addEventListener("click", () => {
   URL.revokeObjectURL(url);
 });
 
-deviceSelect.addEventListener("change", async () => {
-  if (!running) return;
-  const devId = deviceSelect.value;
-  const stream = await navigator.mediaDevices.getUserMedia({ audio: { deviceId: { exact: devId } } });
-  const newSource = audioCtx.createMediaStreamSource(stream);
-  source.disconnect();
-  source = newSource;
-  source.connect(analyser);
+btnMode.addEventListener("click", () => {
+  modeDocente = !modeDocente;
+  document.getElementById("history-card").style.display = modeDocente ? "none" : "block";
+  btnMode.textContent = modeDocente ? "🧑‍🎓 Modo estudiante" : "👨‍🏫 Modo docente";
 });
 
+btnToggle3d.addEventListener("click", () => {
+  show3D = !show3D;
+  document.getElementById("card-3d").style.display = show3D ? "block" : "none";
+});
+
+// top controls
+btnHome.addEventListener("click", () => window.scrollTo({ top: 0, behavior: "smooth" }));
+btnTheme.addEventListener("click", () => document.body.classList.toggle("theme-light"));
+btnPlus.addEventListener("click", () => {
+  const c = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--font-base") || "16");
+  document.documentElement.style.setProperty("--font-base", Math.min(c + 1, 22) + "px");
+});
+btnMinus.addEventListener("click", () => {
+  const c = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--font-base") || "16");
+  document.documentElement.style.setProperty("--font-base", Math.max(c - 1, 12) + "px");
+});
+btnFocus.addEventListener("click", () => document.body.classList.toggle("focus-mode"));
+btnSearch.addEventListener("click", () => searchOverlay.classList.add("show"));
+if (searchClose) {
+  searchClose.addEventListener("click", () => searchOverlay.classList.remove("show"));
+  searchOverlay.addEventListener("click", (e) => {
+    if (e.target === searchOverlay) searchOverlay.classList.remove("show");
+  });
+}
+btnLang.addEventListener("click", () => {
+  currentLang = currentLang === "es" ? "en" : "es";
+  applyLang();
+});
+btnVoz.addEventListener("click", () => {
+  const text = `La frecuencia actual es ${freqValueEl.textContent}`;
+  if ("speechSynthesis" in window) {
+    const u = new SpeechSynthesisUtterance(text);
+    u.lang = currentLang === "es" ? "es-ES" : "en-US";
+    speechSynthesis.speak(u);
+  }
+});
+
+// lang
+function applyLang() {
+  const dict = {
+    es: {
+      title: "📡 Medidor de frecuencia (2D + 3D)",
+      subtitle: "Con controles completos, 3D en tiempo real y exportar CSV.",
+      start: "🎙️ Iniciar medición",
+      stop: "⏹️ Detener"
+    },
+    en: {
+      title: "📡 Frequency meter (2D + 3D)",
+      subtitle: "Full controls, realtime 3D and CSV export.",
+      start: "🎙️ Start measuring",
+      stop: "⏹️ Stop"
+    }
+  };
+  const t = dict[currentLang];
+  document.querySelectorAll("[data-i18n]").forEach(el => {
+    const key = el.getAttribute("data-i18n");
+    if (t[key]) el.textContent = t[key];
+  });
+}
+
+// draw loop
 function draw() {
   if (!running) return;
   requestAnimationFrame(draw);
@@ -172,14 +246,13 @@ function updateHistory() {
   </tr>`).join("");
 }
 
-// ========= 3D =========
+// 3D
 function init3D() {
   const container = document.getElementById("scene3d");
   const fallback = document.getElementById("scene3d-fallback");
   if (!container) return;
-
   if (!window.THREE) {
-    if (fallback) fallback.textContent = "No se encontró THREE. Descarga three.min.js y ponlo en /libs.";
+    if (fallback) fallback.textContent = "No se pudo cargar THREE desde el CDN.";
     return;
   }
   if (fallback) fallback.remove();
@@ -229,7 +302,7 @@ function init3D() {
 
 function animate3D() {
   requestAnimationFrame(animate3D);
-  if (renderer && scene && camera) {
+  if (renderer && scene && camera && show3D) {
     if (controls) controls.update();
     renderer.render(scene, camera);
   }
@@ -276,5 +349,4 @@ function indexToFrequency(index, sampleRate, fftSize) {
   return (index * sampleRate) / fftSize;
 }
 
-// init
 init3D();
